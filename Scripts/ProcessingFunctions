@@ -1,0 +1,216 @@
+/* ==================================================================================
+                      SCRIPT BY ELENA SCHOLZ - 2024
+  This code was developed during a project for the course Global Remote Sensing Applications 
+  at the University of Würzburg supervised by Dr. Maninder Sighn Dhillon. 
+  
+  The aim is to analyise variations in lake surface area, changes shorelines and the possible
+  impact of climate variables.
+  
+  Below you find the processing functions I defined for the analysis!
+
+
+ ================================================================================== */
+
+exports.sentinel2 = function(helperPath, roi, maxCloudCover, yearRange, months, 
+                              elevationThreshold, scaleWaterMask, resolutionPolygons,
+                              processAnnualImages, downloadAnnualAWEI,
+                              downloadAnnualWatermask, downloadAnnualPolygon, downloadAnnualShorline,
+                              processMonthlyImages, downloadMonthlyAWEI, downloadMonthlyWatermask,
+                              downloadMonthlyPolygon, downloadMonthlyShoreline){
+
+  var helper = helperPath;
+
+  // Generate timestamp list
+  var generateTimeStamps = function(year) {
+    return months.map(function(month) {
+      var monthStr = ee.Number(month).format('%02d');  
+      var yearStr = ee.Number(year).format('%.0f');    
+      return yearStr.cat('-').cat(monthStr); 
+    });
+  };
+  var targetTimeStamps = yearRange.map(generateTimeStamps).flatten();
+
+  // =========================================== Annual Image Processing
+  if (processAnnualImages) {
+    var annualImages = ee.ImageCollection.fromImages(
+      yearRange.map(function(year){
+        var annual = helper.getS2Images(roi, maxCloudCover, year);
+        return annual.set('year', year);
+      })
+    );
+    
+    var annualAweiImages = annualImages.map(function(image){
+      var calcAwei = helper.generateAWEI(image, elevationThreshold);
+      return calcAwei.select(['Red', 'Green', 'Blue', 'awei']).toFloat();
+    });
+    
+    print("Annual AWEI:", annualAweiImages);
+    
+    if (downloadAnnualAWEI) {
+     helper.exportAnnualImages(yearRange, annualAweiImages, "_RGB_awei");
+    }
+    
+    var annualWatermask = annualAweiImages.map(function(image) {
+      var withWatermask = helper.generateWatermask(image, scaleWaterMask, roi);
+      return withWatermask.select(['watermask'])
+                          .set('system:time_start', image.get('system:time_start'))
+                          .set('year', image.get('year'))
+                          .set('month', image.get('month'));
+    });
+    
+    print("Annual Watermasks:", annualWatermask);
+  
+    if (downloadAnnualWatermask) {
+      helper.exportAnnualImages(yearRange, annualWatermask, "_watermask");
+    }
+  
+    var annualWatermaskList = annualWatermask.toList(annualWatermask.size());
+    
+    var annualwaterPolygon = annualWatermaskList.map(function(watermask){
+      return helper.createWaterPolygon(watermask, roi, resolutionPolygons);
+    });
+  
+    print("Annual Water Polygon", annualwaterPolygon);
+    
+    if (downloadAnnualPolygon){
+      helper.exportAnnualFeatureCollection(yearRange, annualwaterPolygon, "Polygon");
+    }
+    
+    var annualShorelines = helper.extractShoreline(annualwaterPolygon, roi, resolutionPolygons);
+    
+    print("Annual Shorelines:", annualShorelines);
+    
+    if (downloadAnnualShorline){
+      helper.exportAnnualFeatureCollection(yearRange, annualShorelines, "Shoreline");
+    }
+  }
+  
+  // =========================================== Monthly Image Processing
+  if (processMonthlyImages) {
+    var monthlyImages = ee.ImageCollection.fromImages(
+      yearRange.map(function(year) {
+        return months.map(function(month) {
+          var monthStr = ee.Number(month).format('%02d');  
+          var yearStr = ee.Number(year).format('%.0f');    
+          var timeStamp = yearStr.cat('-').cat(monthStr);  
+          return helper.getMonthlyS2Images(roi, maxCloudCover, year, month)
+                          .set('year', year)
+                          .set('month', month)
+                          .set('timeStamp', timeStamp);
+        });
+      }).flatten()
+    );
+    
+    var aweiImages = monthlyImages.map(function(image){
+      var calcAwei = helper.generateAWEI(image, elevationThreshold);
+      return calcAwei.select(['Red', 'Green', 'Blue', 'awei']).toFloat();
+    });
+    
+    print("Monthly Aweis:", aweiImages);
+  
+    if (downloadMonthlyAWEI) {
+      helper.exportMonthlyImages(yearRange, months, aweiImages, roi, "_RGB_awei");
+    }
+  
+    var watermask = aweiImages.map(function(image) {
+      var withWatermask = helper.generateWatermask(image, scaleWaterMask, roi);
+      return withWatermask.select(['watermask'])
+                        .set('system:time_start', image.get('system:time_start'))
+                        .set('year', image.get('year'))
+                        .set('month', image.get('month'));
+    });
+    
+    print("Monthly Watermasks:", watermask);
+    
+    if (downloadMonthlyWatermask) {
+      helper.exportMonthlyImages(yearRange, months, watermask, roi, "_watermask");
+    }
+    
+    var watermaskList = watermask.toList(watermask.size());
+    
+    var waterPolygon = watermaskList.map(function(watermask){
+      return helper.createWaterPolygon(watermask, roi, resolutionPolygons);
+    });
+  
+    print("Monthly Water Polygon:", waterPolygon);
+    
+    if (downloadMonthlyPolygon){
+      helper.exportMonthlyFeatureCollection(yearRange, months, waterPolygon, 'Polygon');
+    }
+   
+    var shorelines = helper.extractShoreline(waterPolygon, roi, resolutionPolygons);
+    
+    print("Monthly Shorelines:", shorelines);
+    
+    if (downloadMonthlyShoreline){
+      helper.exportMonthlyFeatureCollection(yearRange, months, shorelines, 'Shorelines');
+    }
+  }
+};
+
+exports.era5 = function(helperPath, roi, startYear, endYear, startMonth, endMonth, climateParameterList){
+  var helper = helperPath;
+
+  var startDate = ee.Date.fromYMD(startYear, startMonth, 1);
+  var endDate = ee.Date.fromYMD(endYear, endMonth, 1);
+
+  var era5 = ee.ImageCollection('ECMWF/ERA5_LAND/MONTHLY_AGGR')
+                .filterDate(startDate, endDate)
+                .filterBounds(roi);
+
+  // Function to convert image collection to feature collection
+  function imageToFeature(image, variableName) {
+    // Get date information
+    var date = image.date();
+    var year = date.get('year');
+    var month = date.get('month');
+  
+    // Reduce region to get mean value of the variable
+    var meanValue = image.reduceRegion({
+      reducer: ee.Reducer.mean(),
+      geometry: roi,
+      scale: 1000, // Adjust the scale as necessary
+      maxPixels: 1e9
+    }).get(variableName);
+  
+    // Create a feature with the variable and date properties
+    var properties = {
+      'year': year,
+      'month': month
+    };
+    properties[variableName] = meanValue;
+  
+    var feature = ee.Feature(null, properties);
+  
+    return feature;
+  }
+
+  // Helper function to map and export a collection
+  function processAndExportCollection(collection, variableName, description) {
+    // Apply the function to the ImageCollection
+    var featureCollection = collection.map(function(image) {
+      return imageToFeature(image, variableName);
+    });
+
+    // Convert to a FeatureCollection
+    featureCollection = ee.FeatureCollection(featureCollection);
+
+    print(variableName, featureCollection);
+
+    // Export the FeatureCollection to Drive
+    Export.table.toDrive({
+      collection: featureCollection,
+      description: description,
+      folder: 'GEE_Exports',
+      fileFormat: 'csv',
+      selectors: ['year', 'month', variableName]
+    });
+  }
+
+  // Process and export each parameter
+  climateParameterList.forEach(function(parameter) {
+    var collection = era5.select(parameter);
+    var description = 'monthly' + parameter.charAt(0).toUpperCase() + parameter.slice(1);
+    processAndExportCollection(collection, parameter, description);
+  });
+};
