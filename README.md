@@ -23,7 +23,7 @@ in this region [R1, R2].
 To read the poster [Click here](https://drive.google.com/file/d/1NvES7MFvwAqCMJEiPzoJxuzglWM1wJ_5/view?usp=sharing)
 
 ## Workflow:
-
+![Workflow](LakeDynamics/images/Workflow.png)
 ## Access the code
 
 There are two options to access the code:
