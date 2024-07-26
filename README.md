@@ -20,11 +20,11 @@ precipitation/available water from October to March, and decorrelation during th
 river runoff, permafrost and snowmelt from surrounding mountains play a crucial role in lake surface area extent. Therefore, these variables should be included in further analysis
 in this region [R1, R2].
 
-![Poster](https://github.com/ElenaScholz/LakeDynamics/blob/main/images/ScholzElena_LakeDynamics_Poster.pdf)
+![Poster](https://github.com/ElenaScholz/LakeDynamics/blob/main/images/ScholzElena_LakeDynamics_Poster.png)
 
 
 
-To download the poster [Click here](https://drive.google.com/file/d/1-lxaUW3Ubsh28rFqivBWWUdBlR6pG1vd/view?usp=sharing)
+To download the poster as a PDF [Click here](https://drive.google.com/file/d/1-lxaUW3Ubsh28rFqivBWWUdBlR6pG1vd/view?usp=sharing) or [here](https://github.com/ElenaScholz/LakeDynamics/blob/main/images/ScholzElena_LakeDynamics_Poster.pdf)
 
 ## Workflow:
 ![Workflow](https://github.com/ElenaScholz/LakeDynamics/blob/main/images/Workflow.png)
