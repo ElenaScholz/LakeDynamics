@@ -1,0 +1,316 @@
+/* ==================================================================================
+                      SCRIPT BY ELENA SCHOLZ - 2024
+  This code was developed during a project for the course Global Remote Sensing Applications 
+  at the University of Würzburg supervised by Dr. Maninder Sighn Dhillon. 
+  
+  The aim is to analyise variations in lake surface area, changes shorelines and the possible
+  impact of climate variables.
+  
+  Below you find all used helperfunctions I defined for the analysis!
+
+
+ ================================================================================== */
+
+
+var roi = 
+    /* color: #d63000 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[100.52737134575408, 45.10032107860977],
+          [100.52737134575408, 45.00573009333372],
+          [100.89541333794158, 45.00573009333372],
+          [100.89541333794158, 45.10032107860977]]], null, false);
+
+
+
+// ========== FUNCTIONS FOR SENTINEL 2 Images
+
+/**
+ * Masks clouds and cirrus in Sentinel-2 images.
+ * @param {ee.Image} image - Sentinel-2 image.
+ * @return {ee.Image} Cloud-masked and scaled image.
+ */
+var maskS2clouds = function(image){
+  var qa = image.select('QA60');
+  
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  // Dividing by 10000 for scaling
+  return image.updateMask(mask).divide(10000);
+};
+
+/**
+ * Renames the bands of Sentinel-2 images.
+ * @param {ee.Image} image - Sentinel-2 image.
+ * @return {ee.Image} Image with renamed bands.
+ */
+var renameBandsS2 = function(image){
+    var bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12', 'QA60'];
+    var new_bandnames = ['Blue', 'Green', 'Red', 'Red Edge1', 'Red Edge2', 'Red Edge3', 'NIR', 'Red Edge 4', 'SWIR1', 'SWIR2', 'QA60'];
+    return image.select(bands).rename(new_bandnames);
+};
+
+/**
+ * Retrieves a median composite of Sentinel-2 images for a given year, filtered by cloud cover and clipped to the specified geometry.
+ * @param {ee.Geometry} geometry - Region of interest.
+ * @param {number} maxCloudCover - Maximum cloud cover percentage.
+ * @param {number} year - Year for filtering images.
+ * @return {ee.Image} Median composite of filtered and processed Sentinel-2 images.
+ */
+exports.getS2Images = function(geometry, maxCloudCover, year){
+  var s2Images = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterBounds(geometry)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', maxCloudCover))
+                  .filter(ee.Filter.calendarRange(year, year, 'year'))
+                  .map(maskS2clouds)
+                  .map(renameBandsS2);
+                  
+  var elevation = ee.Image("USGS/SRTMGL1_003").select("elevation");
+  
+  return s2Images.median().clip(geometry).addBands(elevation);
+};
+
+/**
+ * Retrieves a median composite of Sentinel-2 images for a specific month of a given year, filtered by cloud cover and clipped to the specified geometry.
+ * @param {ee.Geometry} geometry - Region of interest.
+ * @param {number} maxCloudCover - Maximum cloud cover percentage.
+ * @param {number} year - Year for filtering images.
+ * @param {number} month - Month for filtering images.
+ * @return {ee.Image} Median composite of filtered and processed Sentinel-2 images.
+ */
+exports.getMonthlyS2Images = function(geometry, maxCloudCover, year, month){
+  var s2Images = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterBounds(geometry)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', maxCloudCover))
+                  .filter(ee.Filter.calendarRange(year, year, 'year'))
+                  .filter(ee.Filter.calendarRange(month, month, 'month'))
+                  .map(maskS2clouds)
+                  .map(renameBandsS2);
+                  
+  var elevation = ee.Image("USGS/SRTMGL1_003").select("elevation");
+  
+  return s2Images.median().clip(geometry).addBands(elevation);
+};
+
+/**
+ * Generates the Automated Water Extraction Index (AWEI) from an image and applies an elevation mask.
+ * @param {ee.Image} image - Input image with required bands and elevation.
+ * @param {number} elevationThreshold - Maximum elevation for masking.
+ * @return {ee.Image} Image with AWEI band added.
+ */
+exports.generateAWEI = function(image, elevationThreshold) {
+  var maxElevation = elevationThreshold;
+  
+  // Create an elevation mask
+  var elevationMask = image.select("elevation").lt(maxElevation);
+  
+  // Apply the elevation mask to the image
+  var maskedImage = image.updateMask(elevationMask);
+  
+  // Calculate AWEI
+  var awei = maskedImage.expression(
+    '4 * (Green - SWIR1) - (0.25 * NIR + 2.75 * SWIR2)', {
+      'Green': maskedImage.select('Green'),
+      'NIR': maskedImage.select('NIR'),
+      'SWIR1': maskedImage.select('SWIR1'),
+      'SWIR2': maskedImage.select('SWIR2'),
+  }).rename('awei');
+  return maskedImage.addBands(awei);
+};
+
+/**
+ * Generates a water mask from an AWEI image using Otsu thresholding.
+ * @param {ee.Image} aweiImage - Image with AWEI band.
+ * @param {number} scale - Scale in meters for Otsu thresholding.
+ * @param {ee.Geometry} bounds - Geometry for computing the threshold.
+ * @return {ee.Image} Image with water mask band added.
+ */
+exports.generateWatermask = function(aweiImage, scale, bounds) {
+  var aweiThresholding = require('users/gena/packages:thresholding');
+  var cannyThreshold = 0.7;
+  var cannySigma = 1;
+  var minValue = -0.2;
+  var awei = aweiImage.select("awei");
+  
+  // Compute the threshold using Otsu method
+  var th = aweiThresholding.computeThresholdUsingOtsu(
+    awei, scale, bounds, 
+    cannyThreshold, cannySigma, minValue);
+  
+  // Apply the threshold to generate water mask
+  var watermask = awei.gt(th).rename('watermask');
+  
+  return aweiImage.addBands(watermask);
+};
+
+/**
+ * Creates polygons representing water bodies from a water mask image.
+ * @param {ee.Image} watermask - Image with water mask band.
+ * @param {ee.Geometry} geometry - Region of interest.
+ * @param {number} resolution - Scale in meters for vectorization.
+ * @return {ee.FeatureCollection} FeatureCollection of water polygons.
+ */
+exports.createWaterPolygon = function(watermask, geometry, resolution) {
+  var watermask_prop = ee.Image(watermask)
+  var polygon = ee.Image(watermask).selfMask()
+    .reduceToVectors({
+      geometry: geometry, 
+      scale: resolution,
+      eightConnected: true,
+      maxPixels: 1e10,
+      tileScale: 16
+    });
+  return polygon.set({
+    'year': watermask_prop.get('year'),
+    'month': watermask_prop.get('month')
+  });
+};
+
+/**
+ * Extracts shorelines from a list of water polygons.
+ * @param {ee.List} fcList - List of FeatureCollections with water polygons.
+ * @param {ee.Geometry} roi - Region of interest.
+ * @param {number} resolution - Scale in meters for simplification.
+ * @return {ee.List} List of FeatureCollections with shorelines.
+ */
+exports.extractShoreline = function(fcList, roi, resolution){
+  fcList = ee.List(fcList);
+  // Iterate over the list of FeatureCollections
+  var shorelines = fcList.map(function(fc) {
+    return ee.FeatureCollection(fc).map(function(f) {
+      var coords = f.geometry()
+        .simplify({maxError: resolution})
+        .coordinates();
+      
+      // Buffer the geometry by a pixel to avoid rasterizing the boundary polygon
+      var bufferDistance = ee.Number(resolution).multiply(-1);
+      return f.setGeometry(
+        ee.Geometry.MultiLineString(coords)
+          .intersection(roi.buffer(bufferDistance))
+      );
+    });
+  });
+
+  // Return the list of shorelines
+  return shorelines;
+};
+
+//===================EXPORT FUNCTIONS
+
+/**
+ * Exports an image to Google Drive.
+ * @param {ee.Image} image - Image to export.
+ * @param {string} name - Name of the exported image.
+ * @param {ee.Geometry} region - Region of interest.
+ */
+var exportImage = function(image, name, region) {
+  Export.image.toDrive({
+    image: image,
+    description: name,
+    folder: 'GEE_Export', 
+    region: region,
+    scale: 30, 
+    maxPixels: 1e13,
+  });
+};
+
+/**
+ * Exports annual images from an image collection.
+ * @param {ee.List} yearRange - List of years to export.
+ * @param {ee.ImageCollection} imageCollection - Image collection containing annual images.
+ * @param {string} nameSuffix - Suffix for the exported image names.
+ */
+exports.exportAnnualImages = function(yearRange, imageCollection, nameSuffix){
+  // Export annual AWEI images
+  yearRange.getInfo().forEach(function(year) {
+    var img_year = ee.Image(imageCollection.filter(ee.Filter.eq('year', year)).first());
+    var name = 'Sen2_' + year + nameSuffix;
+    exportImage(img_year, name, roi);
+  });
+};
+
+/**
+ * Exports monthly images from an image collection.
+ * @param {ee.List} yearRange - List of years to export.
+ * @param {ee.List} months - List of months to export.
+ * @param {ee.ImageCollection} Images - Image collection containing monthly images.
+ * @param {ee.Geometry} roi - Region of interest.
+ * @param {string} spec_name - Suffix for the exported image names.
+ */
+exports.exportMonthlyImages = function(yearRange, months, Images, roi, spec_name) {
+  yearRange.getInfo().forEach(function(year) {
+    months.getInfo().forEach(function(month) {
+      var monthStr = ee.Number(month).format('%02d');  // Format month as two digits
+      var yearStr = ee.Number(year).format('%.0f');    // Format year without decimals
+      var timeStamp = yearStr.cat('-').cat(monthStr);  // Combine year and month
+
+      // Filter images by timestamp and export
+      var filteredImages = Images.filterMetadata('timeStamp', 'equals', timeStamp);
+      var image = ee.Image(filteredImages.first());
+      var name = 'Sen2_' + year + '_' + month + spec_name;
+      exportImage(image, name, roi);
+    });
+  });
+};
+
+/**
+ * Exports a FeatureCollection to Google Drive.
+ * @param {ee.FeatureCollection} FeatureCollection - FeatureCollection to export.
+ * @param {string} name - Name of the exported file.
+ */
+var exportFeatureCollection = function(FeatureCollection, name) {
+  Export.table.toDrive({
+    collection: FeatureCollection,
+    description: name,
+    folder: 'GEE_Export',
+    fileFormat: 'SHP'
+  });
+};
+
+/**
+ * Exports annual FeatureCollections.
+ * @param {ee.List} yearRange - List of years to export.
+ * @param {ee.List} featureCollectionList - List of FeatureCollections to export.
+ * @param {string} ds_name - Prefix for the exported file names.
+ */
+exports.exportAnnualFeatureCollection = function(yearRange, featureCollectionList, ds_name) {
+  yearRange.getInfo().forEach(function(year, index) {
+    var fc_year = ee.FeatureCollection(ee.List(featureCollectionList).get(index));
+    var name = ds_name + year;
+    exportFeatureCollection(fc_year, name);
+  });
+};
+
+/**
+ * Exports monthly FeatureCollections.
+ * @param {ee.List} yearRange - List of years to export.
+ * @param {ee.List} months - List of months to export.
+ * @param {ee.List} featureCollectionList - List of FeatureCollections to export.
+ * @param {string} ds_name - Prefix for the exported file names.
+ */
+exports.exportMonthlyFeatureCollection = function(yearRange, months, featureCollectionList, ds_name) {
+  var index = 0;
+  yearRange.getInfo().forEach(function(year) {
+    var yearStr = year.toString();
+    months.getInfo().forEach(function(month) {
+      var monthStr = ee.Number(month).format('%02d').getInfo();  // Format month as two digits
+      var timeStamp = yearStr + '-' + monthStr;  // Combine year and month
+
+      // Get the FeatureCollection from the list
+      var fc = ee.FeatureCollection(ee.List(featureCollectionList).get(index));
+      var name = ds_name + yearStr + '_' + monthStr;
+      exportFeatureCollection(fc, name);
+
+      index++;
+    });
+  });
+};
