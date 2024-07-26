@@ -1,0 +1,111 @@
+/* ==================================================================================
+                      SCRIPT BY ELENA SCHOLZ - 2024
+  This code was developed during a project for the course Global Remote Sensing Applications 
+  at the University of Würzburg supervised by Dr. Maninder Sighn Dhillon. 
+  
+  The aim is to analyise variations in lake surface area, changes shorelines and the possible
+  impact of climate variables.
+  
+  Below you find all variables that need to be defined before running the code!
+
+
+ ================================================================================== */
+
+// This is the Regoin of Interest (roi) - it is set to Lake Orog Nuur in Mongolia. 
+// You can change it to your region of interest. Make sure to name it also roi or change the name in the function below!
+var roi = ee.Geometry.Polygon(
+    [[[100.52737134575408, 45.10032107860977],
+      [100.52737134575408, 45.00573009333372],
+      [100.89541333794158, 45.00573009333372],
+      [100.89541333794158, 45.10032107860977]]], null, false);
+      
+      
+
+var maxCloudCover = 20;                                         //The maximum Cloud Coverage for the Sentinel 2 Scenes
+
+
+var startYear = 2020;                                           // The start year of the Analysis
+var endYear = 2021;                                             // The end year of the Analysis  
+
+var startMonth = 1;                                             // The start month of the Analysis
+var endMonth = 12;                                              // The end month of the Analysis
+
+
+// =============================== SENTINEL2 - Parameter
+var elevationThreshold = 1220;                                  // The elevation Threshold - all values above the threshold will be masked out!
+
+var scaleWaterMask = 50;                                        // The Scale for the water mask - lower values will increase computation
+var resolutionPolygons = 15;                                    // the Scale in of the water polygons in meter
+
+// Decide if you want to calculate Annual and/or Monthly datastes! ( possible values: true/false)
+var processAnnualImages = true;   
+var processMonthlyImages = true;
+
+// Decide which datasets you would like to download
+
+// ANNUAL
+var downloadAnnualAWEI = false;                                 // AWEI
+var downloadAnnualWatermask = false;                            // Watermask (Rasterdataset)
+var downloadAnnualPolygon = false;                              // Lake Surface Area (Polygon)
+var downloadAnnualShorline = true;                              // Shoreline (Polyline)
+
+// MONTHLY
+var downloadMonthlyAWEI = false;                                // AWEI
+var downloadMonthlyWatermask = false;                           // Watermask (Rasterdataset)
+var downloadMonthlyPolygon = true;                              // Lake Surface Area (Polygon)
+var downloadMonthlyShoreline = true;                            // Shoreline (Polyline)
+
+
+// =============================== ERA5 - Parameter
+
+// Decide if you want to compute era5 datasets (possible values: true/false)
+var generateEra5Data = false;  
+
+// This is the list of climate parameters you like to download. You can choose every possible band from 
+// ERA5-Land Monthly Aggregated - ECMWF Climate Reanalysis
+var climateParameterList = ["temperature_2m", 
+                            "total_precipitation_sum", 
+                            "evaporation_from_open_water_surfaces_excluding_oceans_sum",
+                            "snow_cover",
+                            "runoff_sum",
+                            "snowmelt_sum"
+                            ];
+
+// ============================ Importing other functions
+// If you are using the script within my repository nothing needs to be changes. 
+// If you imported the Scripts from Github make sure to change the path to the two Scripts! 
+// Format:  "users/username/Repository:Filename"
+
+
+// Importing processing functions
+var processing = require('users/elenascholz/CC2_DrylandDynamics:Sentinel2Era5');
+
+// Importing Helperfunctions
+var helperPath = require('users/elenascholz/CC2_DrylandDynamics:LakeOrog_helper');
+
+
+
+
+
+// =========================================== Start of Code
+Map.centerObject(roi);
+
+var yearRange = ee.List.sequence(startYear, endYear);
+var months = ee.List.sequence(startMonth, endMonth);
+
+
+
+var sen2 = processing.sentinel2(helperPath, roi, maxCloudCover, yearRange, months, 
+                            elevationThreshold, scaleWaterMask, resolutionPolygons,
+                            processAnnualImages, downloadAnnualAWEI,
+                            downloadAnnualWatermask, downloadAnnualPolygon, downloadAnnualShorline,
+                            processMonthlyImages, downloadMonthlyAWEI, downloadMonthlyWatermask,
+                            downloadMonthlyPolygon, downloadMonthlyShoreline);
+
+print(sen2);
+
+if (generateEra5Data){
+  // Download Era5 datasets
+  var era5 = processing.era5(helperPath, roi, startYear, endYear, startMonth, endMonth, climateParameterList);
+  print(era5);
+}
