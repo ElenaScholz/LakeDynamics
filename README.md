@@ -27,8 +27,9 @@ There are two options to access the code:
     \
     [GEE:
     LakeDynamics](https://code.earthengine.google.com/?accept_repo=users/elenascholz/CC2_DrylandDynamics)
+   
 
-2.  If you like to use the code for your own analysis use the provided
+3.  If you like to use the code for your own analysis use the provided
     Scripts in the Scripts-folder. There you will find all three
     Scripts.\
     You can copy them into your own repository.\
