@@ -40,3 +40,5 @@ There are two options to access the code:
 To implement the Scripts I used the Otsu Threshold. The function is
 provided through Gennadii Donchyts’s package: [Gena
 Package](https://code.earthengine.google.co.in/?scriptPath=users%2Fgena%2Fpackages%3Athresholding)\
+
+I would like to acknowledge the blog 'Spatial Thoughts' for providing code that greatly assisted in the development of this project.
